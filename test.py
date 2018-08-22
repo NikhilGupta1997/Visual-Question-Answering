@@ -1,35 +1,33 @@
 from __future__ import division
-import os
-import time
+
 import copy
-import torch
-import operator
-import torchvision
-import pandas as pd
+import json
 import numpy as np
-from skimage import io, transform
+import operator
+import os
+import pandas as pd
+import time
+import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
+import torch.nn.init as init
+import torchvision
+import warnings
+
+from skimage import io, transform
 from torch.optim import lr_scheduler as lsched
 from torch.autograd import Variable
 from torchvision import models, transforms
 from torch.utils.data import Dataset, DataLoader
 from torch.nn.utils.rnn import pack_padded_sequence
-import torch.nn.functional as F
-import torch.nn.init as init
-import json
-# from data_conv import QuestionDataset, GetDataLoader, sort_batch
-import warnings
-warnings.filterwarnings("ignore")
 
+warnings.filterwarnings("ignore")
 
 EMBEDDING_DIM = 300
 HIDDEN_DIM = 512
 root_data_dir = ''
 K =2000
-
-
-
 
 def getDataLoader(input):
 	file = open(root_data_dir+input,'r')
@@ -236,9 +234,6 @@ def GetDataLoader(image_mapping,word_to_ix,maxi):
 	testloader = torch.utils.data.DataLoader(test_dataset,batch_size=128,shuffle =False,num_workers=1)
 	return testloader, len(word_to_ix)
 
-
-
-
 def test(model,dataLoader,answer_ids):
 	model.eval()
 	question_ids =[]
@@ -319,7 +314,6 @@ class LSTM_RNN(nn.Module):
 		self.word_embeddings = nn.Embedding(vocab_size, embedding_dim)
 		self.lstm = nn.LSTM(embedding_dim, hidden_dim,num_hidden_layers,batch_first = True)
 		self.linear = nn.Linear(2*self.hidden_dim*self.num_hidden_layers,1024)
-		# self.hidden = self.init_hidden()
 
 	def init_hidden(self,batch_size):
 		return (Variable(torch.zeros(self.num_hidden_layers,batch_size,self.hidden_dim).cuda()),
@@ -333,10 +327,6 @@ class LSTM_RNN(nn.Module):
 		h0 = Variable(torch.zeros(self.num_hidden_layers,n,self.hidden_dim).cuda())
 		c0 = h0
 		x,(hn,cn) = self.lstm(embeds,(h0,c0))
-		# length = embeds.size()[1]
-		# for i in range(length):
-		# 	self.hidden,(hn,cn) = self.lstm((embeds[:,i,:]).view(-1,EMBEDDING_DIM), self.hidden)
-		# 	if(i==length-1):
 		output = hn[0,:,:]
 		for i in range(self.num_hidden_layers-1):
 			output = torch.cat((output,hn[i+1,:,:]),1)
@@ -348,66 +338,16 @@ class LSTM_RNN(nn.Module):
 class VQA_model(nn.Module):
 	def __init__(self, embedding_dim, hidden_dim,num_hidden_layers, vocab_size):
 		super(VQA_model, self).__init__()
-		
-		
-		# self.CNN =models.vgg16_bn(pretrained=False)
-		# self.CNN.load_state_dict(torch.load('vgg16_bn-6c64b313.pth'))
-		# for param in self.CNN.parameters():
-		# 	param.requires_grad = False
-		# Making the last fc layer to be finetunable
-		### If I is to be taken
-		# self.CNN.classifier[6] = nn.Linear(4096, 1024)	
-
-		### If norm-I is to be taken 
-		# self.CNN.classifier[6] = nn.BatchNorm1d(4096)
-		# self.fc_cnn = nn.Linear(4096,1024)
-
-		# self.CNN.classifier = nn.Sequential(
-  #           self.CNN.classifier[0],
-  #           self.CNN.classifier[1],
-  #           self.CNN.classifier[2],
-  #           self.CNN.classifier[3],
-  #           self.CNN.classifier[4],
-  #           self.CNN.classifier[5],
-  #           # nn.BatchNorm1d(4096),
-  #           nn.Linear(4096,1024),
-  #           )
-		# self.CNN.classifier = nn.Sequential(
-  #           *(self.CNN.classifier[i] for i in range(6)))
-		self.fci = nn.Sequential(
-			# nn.BatchNorm1d(4096, affine=False),
-			nn.Linear(4096,1024))
+		self.fci = nn.Sequential(nn.Linear(4096,1024))
 		self.lstm = LSTM_RNN(embedding_dim, hidden_dim,num_hidden_layers,vocab_size)
 		self.MLP = nn.Sequential(
-			nn.Dropout(),
-			nn.Linear(1024, 1024),
-			# nn.ReLU(inplace=True),
-			nn.Tanh(),
-			nn.Dropout(),
-			nn.Linear(1024, 1024),
-			# nn.ReLU(inplace=True),
-			nn.Tanh(),
-			nn.Linear(1024, K+1),
-		)
-
+			nn.Dropout(), nn.Linear(1024, 1024), nn.Tanh(),
+			nn.Dropout(), nn.Linear(1024, 1024), nn.Tanh(),
+			nn.Linear(1024, K+1))
 
 	def forward(self, image,sentence,seq_len):
-		
-		# print(img_features)
-		# norm = img_features.norm(p=2, dim=0)
-		# img_features = img_features.div(norm.expand_as(img_features))
-		# print(img_features)
-		# print(self.fci.weight)
 		img_features = self.fci(image)
-		# print(img_features)
-		## For norm-I
-		# img_features = self.fc_cnn(img_features)
-		# batch_size = (sentences.size())[1]
-		# self.LSTM.hidden = self.LSTM.init_hidden(batch_size)
 		query_features = self.lstm(sentence,seq_len)
-		# print(query_features)
-		# print(img_features.size())
-		# print(query_features.size())
 		final_emb = img_features*query_features
 		output = self.MLP(final_emb)
 		return output
